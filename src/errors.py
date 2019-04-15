@@ -1,3 +1,2 @@
-class ConfigException(Exception):
+class ConfigError(Exception):
     pass
-

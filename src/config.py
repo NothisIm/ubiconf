@@ -1,44 +1,47 @@
 import os
-from copy import deepcopy
+
+from .errors import ConfigError
 
 
-from .errors import ConfigException
+class Placeholder:
+    """Placeholder for nested objects."""
 
 
-class DictConfig:
+class Config:
 
-    def __init__(self, config):
-        self._config = deepcopy(config)
+    def __init__(self, source, sep='|', strict=True):
+        self._source = source
 
-        self._substitute_vars(self._config)
+        # TODO: implement non-strict solution
+        self._strict = strict
+        self._sep = sep
 
-    def as_dict(self):
-        return self._config
+        self._expand_variables(self, self._source)
 
-    def _substitute_vars(self, section):
-        for key, value in section.items():
-            if isinstance(value, dict):
-                self._substitute_vars(value)
-            elif isinstance(value, str) and value.startswith('$'):
-                section[key] = os.environ[value.lstrip('$')]
+    def _expand_variables(self, obj, source):
+        for key, value in source.items():
+            if isinstance(value, str) and value.startswith('$'):
+                setattr(obj, key, self._retrieve_var(value))
+            elif isinstance(value, dict):
+                new_obj = Placeholder()
+                setattr(obj, key, new_obj)
+                self._expand_variables(new_obj, value)
+            else:
+                setattr(obj, key, value)
 
-    def _validate(self, vars):
-        missing = vars.difference(set(os.environ.keys()))
-        if missing:
-            msg = '''Missing environment variables:
-                \t{missing}.
-                Full list of required variables:
-                \t{all}
-            '''.format(
-                missing=',\n\t'.join(sorted(missing)),
-                all=',\n\t'.join(sorted(vars))
-            )
-            raise ConfigException(msg)
+    def _retrieve_var(self, value):
+        var, *optional = value.split(self._sep, maxsplit=1)
+        env_var = var.lstrip('$')
 
-    def __getattr__(self, item):
         try:
-            return self._config[item]
+            return os.environ[env_var]
         except KeyError:
-            raise AttributeError(
-                'Field `{}` can not be found in config'.format(item)
-            )
+            if optional:
+                return self._retrieve_var(optional[0])
+
+            exc = ConfigError('Environment variable {var} was not found'.format(var=env_var))
+
+            if self._strict:
+                raise exc
+            else:
+                return exc
